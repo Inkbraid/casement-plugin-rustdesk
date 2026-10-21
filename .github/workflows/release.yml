@@ -1,0 +1,36 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds the plugin and publishes a release with
+# the zip. GitHub adds the tag's source archives to every release, which
+# keeps each binary next to its corresponding source as the AGPL requires.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check the tag matches the crate version
+        shell: pwsh
+        run: |
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages[0].version
+          if ("v$version" -ne "${{ github.ref_name }}") { throw "tag ${{ github.ref_name }} != crate version $version" }
+      - run: cargo build --release
+      - run: cargo test --release
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/rustdesk | Out-Null
+          Copy-Item target/release/casement-rustdesk.exe, plugin.json, LICENSE, README.md, CHANGELOG.md dist/rustdesk/
+          Compress-Archive -Path dist/rustdesk -DestinationPath "casement-rustdesk-${{ github.ref_name }}-windows-x64.zip"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: casement-rustdesk-${{ github.ref_name }}-windows-x64.zip
+          generate_release_notes: true
