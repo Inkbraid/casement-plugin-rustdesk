@@ -99,7 +99,15 @@ fn rustdesk_peer() {
 
 fn session(e: &Env) {
     let mut c = start(e, &e.password);
+    // Clipboard text sent while connecting reaches the peer after login.
+    let early = format!("early from casement {}", std::process::id());
+    c.send(&FromCasement::Clipboard {
+        text: early.clone(),
+    })
+    .unwrap();
     assert_eq!(state(&c).0, State::Connected);
+    let got = wait_on_peer(e, "timeout 2 xclip -o -selection clipboard", &early);
+    assert_eq!(got, early);
 
     // The picture: a surface for the peer's screen and a first full frame.
     let (w, h) = c

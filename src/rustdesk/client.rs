@@ -48,12 +48,13 @@ pub async fn run(
     password: String,
     mut events: UnboundedReceiver<Event>,
 ) {
+    let mut early_clipboard = None;
     let mut conn = tokio::select! {
         res = super::connect::connect(&peer) => match res {
             Ok(c) => c,
             Err(text) => host.finish(State::Failed, &text),
         },
-        _ = wait_for_disconnect(&mut events) => return,
+        _ = wait_for_disconnect(&mut events, &mut early_clipboard) => return,
     };
     let mut s = Remote {
         host,
@@ -67,7 +68,7 @@ pub async fn run(
         cursor_hidden: false,
         video: None,
         last_clipboard: None,
-        pending_clipboard: None,
+        pending_clipboard: early_clipboard,
         refresh: None,
     };
     let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
@@ -101,11 +102,16 @@ pub async fn run(
     }
 }
 
-async fn wait_for_disconnect(events: &mut UnboundedReceiver<Event>) {
+/// Waits for `disconnect` while connecting, keeping the latest clipboard
+/// text for after login. Other input before the connection has nowhere to go.
+async fn wait_for_disconnect(
+    events: &mut UnboundedReceiver<Event>,
+    clipboard: &mut Option<String>,
+) {
     loop {
         match events.recv().await {
             Some(Event::Disconnect) | None => return,
-            // Input before the connection exists has nowhere to go.
+            Some(Event::Casement(FromCasement::Clipboard { text })) => *clipboard = Some(text),
             Some(Event::Casement(_)) => {}
         }
     }

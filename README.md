@@ -158,7 +158,9 @@ cargo build --release          # target\release\casement-rustdesk.exe
 
 `vcpkg.json` and `vcpkg-ports/` build libvpx, aom and libyuv the way
 RustDesk's `scrap` crate links them. The C runtime is linked statically
-(`.cargo/config.toml`), so the program needs nothing else installed.
+(`.cargo/config.toml`), so the program needs nothing else installed. It is
+built for the Windows GUI subsystem, so starting it never opens a console
+window; its redirected standard handles work as usual.
 `.github/workflows/ci.yml` does exactly this.
 
 ### Linux (tests)
