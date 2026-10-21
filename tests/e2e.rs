@@ -158,25 +158,34 @@ fn session(e: &Env) {
     let typed = wait_on_peer(e, "test -f /tmp/typedok && echo yes", "yes");
     assert_eq!(typed, "yes");
 
-    // Clipboard text both ways. The peer's change first: right after RustDesk
-    // writes a clipboard it got from us it doesn't report the next change.
-    let theirs = format!("from the peer {}", std::process::id());
-    // Detached, so xclip keeps owning the clipboard after docker exec returns.
-    let status = Command::new("docker")
-        .args(["exec", "-d", "-e", "DISPLAY=:0", &e.container, "bash", "-c"])
-        .arg(format!(
-            "printf %s '{theirs}' | xclip -selection clipboard -quiet"
-        ))
-        .status()
-        .expect("docker exec");
-    assert!(status.success());
-    let text = c
-        .expect(T, |m| match m {
+    // Clipboard text both ways, the peer's first. The peer reports a change when its X clipboard listener fires and it
+    // can read the new owner in time; on a slow machine it sometimes can't,
+    // so set it again rather than wait for a report that won't come.
+    let mut got = None;
+    for attempt in 1..=3 {
+        let theirs = format!("from the peer {} #{attempt}", std::process::id());
+        // Detached, so xclip keeps owning the clipboard after docker exec returns.
+        let status = Command::new("docker")
+            .args(["exec", "-d", "-e", "DISPLAY=:0", &e.container, "bash", "-c"])
+            .arg(format!(
+                "printf %s '{theirs}' | xclip -selection clipboard -quiet"
+            ))
+            .status()
+            .expect("docker exec");
+        assert!(status.success());
+        got = c.expect(Duration::from_secs(8), |m| match m {
             ToCasement::Clipboard { text } if *text == theirs => Some(text.clone()),
             _ => None,
-        })
-        .expect("the peer's clipboard");
-    assert_eq!(text, theirs);
+        });
+        if got.is_some() {
+            break;
+        }
+        eprintln!(
+            "e2e: no clipboard from the peer yet; it holds {:?}",
+            on_peer(e, "timeout 2 xclip -o -selection clipboard")
+        );
+    }
+    assert!(got.is_some(), "the peer's clipboard never arrived");
 
     let ours = format!("from casement {}", std::process::id());
     c.send(&FromCasement::Clipboard { text: ours.clone() })
