@@ -16,7 +16,9 @@ env:
   # The vcpkg commit RustDesk's own build uses at the pinned RustDesk commit;
   # keep in step with the baseline in vcpkg.json.
   VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
-  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+  # vcpkg removed its GitHub Actions cache backend; built packages are kept
+  # in a folder that actions/cache saves instead.
+  VCPKG_BINARY_SOURCES: "clear;files,C:\\vcpkg-binary-cache,readwrite"
 
 jobs:
   linux:
@@ -63,6 +65,12 @@ jobs:
         uses: KyleMayes/install-llvm-action@v2
         with:
           version: "15.0.6"
+      - name: Cache the built codec libraries
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg-binary-cache
+          key: vcpkg-x64-windows-static-${{ env.VCPKG_COMMIT_ID }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
+          restore-keys: vcpkg-x64-windows-static-${{ env.VCPKG_COMMIT_ID }}-
       - name: Set up vcpkg
         uses: lukka/run-vcpkg@v11
         with:
@@ -72,6 +80,7 @@ jobs:
       - name: Build the codec libraries
         shell: bash
         run: |
+          mkdir -p /c/vcpkg-binary-cache
           if ! "$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"; then
             find "$VCPKG_ROOT/buildtrees" -name "*.log" -exec sh -c 'echo "== $1"; tail -n 50 "$1"' _ {} \;
             exit 1
