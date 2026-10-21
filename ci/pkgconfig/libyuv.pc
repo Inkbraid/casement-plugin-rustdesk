@@ -1,0 +1,11 @@
+# Ubuntu's libyuv-dev ships no pkg-config file; scrap's linux-pkg-config
+# build looks for one.
+prefix=/usr
+libdir=${prefix}/lib/x86_64-linux-gnu
+includedir=${prefix}/include
+
+Name: libyuv
+Description: YUV conversion and scaling
+Version: 0.0
+Libs: -L${libdir} -lyuv
+Cflags: -I${includedir}

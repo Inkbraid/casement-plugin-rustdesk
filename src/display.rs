@@ -11,7 +11,7 @@ use crate::surface::Surface;
 use std::sync::Arc;
 
 /// More rectangles than this are merged into their bounding box.
-const MAX_RECTS: usize = 32;
+const MAX_RECTS: usize = 64;
 
 pub struct Display {
     out: Arc<Output>,
@@ -94,6 +94,18 @@ impl Display {
 
     pub fn damage_all(&mut self) {
         self.full = true;
+        self.rects.clear();
+    }
+
+    /// What would be sent: everything, or these rectangles.
+    #[cfg(test)]
+    pub fn pending(&self) -> (bool, Vec<[u32; 4]>) {
+        (self.full, self.rects.clone())
+    }
+
+    #[cfg(test)]
+    pub fn clear_pending(&mut self) {
+        self.full = false;
         self.rects.clear();
     }
 

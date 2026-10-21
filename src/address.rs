@@ -143,7 +143,7 @@ fn parse_query(query: &str) -> Result<HashMap<String, String>, String> {
 }
 
 /// Adds the default port to `host`, `host:port`, `[v6]` or `[v6]:port`.
-fn with_default_port(host: &str, port: u16) -> Result<String, String> {
+pub(crate) fn with_default_port(host: &str, port: u16) -> Result<String, String> {
     let host = host.trim();
     let bad = || format!("“{host}” isn't a host name or host:port.");
     if host.is_empty() || host.contains(['/', '?', '#', ' ', '@']) {

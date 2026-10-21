@@ -5,6 +5,7 @@ pub mod address;
 pub mod display;
 pub mod host;
 pub mod protocol;
+pub mod rustdesk;
 pub mod session;
 pub mod sim;
 pub mod stdio;
@@ -65,14 +66,15 @@ pub fn run(host: Arc<Host>, mut input: impl Read) -> i32 {
         Err(text) => host.finish(State::Failed, &text),
         Ok(Address::Test(opts)) => test_pattern::start(host.clone(), opts, &password),
         Ok(Address::Peer(peer)) => {
-            log::info!("peer {} via {}", peer.id, peer.server);
-            host.finish(
-                State::Failed,
-                "This build of the RustDesk plugin can't connect to RustDesk peers yet.",
-            )
+            log::info!(
+                "peer {} via {} (RustDesk code from {})",
+                peer.id,
+                peer.server,
+                rustdesk::RUSTDESK_COMMIT
+            );
+            rustdesk::start(host.clone(), peer, password)
         }
     };
-    drop(password);
 
     loop {
         match next_message(&mut input) {

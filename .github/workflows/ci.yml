@@ -8,13 +8,26 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # The vcpkg commit RustDesk's own build uses at the pinned RustDesk commit;
+  # keep in step with the baseline in vcpkg.json.
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
 
 jobs:
   linux:
     name: Linux tests
     runs-on: ubuntu-latest
+    env:
+      PKG_CONFIG_PATH: ${{ github.workspace }}/ci/pkgconfig
     steps:
       - uses: actions/checkout@v4
+      - name: Codec and X11 libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvpx-dev libaom-dev libyuv-dev libjpeg-dev \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libxfixes-dev \
+            libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -28,6 +41,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install LLVM (for bindgen)
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "15.0.6"
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+      - name: Build the codec libraries
+        shell: bash
+        run: |
+          if ! "$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"; then
+            find "$VCPKG_ROOT/buildtrees" -name "*.log" -exec sh -c 'echo "== $1"; tail -n 50 "$1"' _ {} \;
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy

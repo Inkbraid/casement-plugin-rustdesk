@@ -11,11 +11,29 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
 jobs:
   release:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install LLVM (for bindgen)
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "15.0.6"
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+      - name: Build the codec libraries
+        shell: bash
+        run: '"$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"'
       - uses: dtolnay/rust-toolchain@stable
       - name: Check the tag matches the crate version
         shell: pwsh
