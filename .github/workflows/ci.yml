@@ -27,7 +27,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libvpx-dev libaom-dev libyuv-dev libjpeg-dev \
             libx11-dev libxi-dev libxtst-dev libxext-dev libxfixes-dev \
-            libclang-dev pkg-config
+            libxcb1-dev libxcb-shm0-dev libxcb-randr0-dev libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -35,6 +35,19 @@ jobs:
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
+      - name: Start hbbs, hbbr and a RustDesk peer
+        run: tools/e2e/up.sh
+      - name: End-to-end test against the peer
+        run: |
+          . tools/e2e/env
+          cargo test --test e2e -- --nocapture
+      - name: Peer and server logs
+        if: failure()
+        run: |
+          docker logs e2e-hbbs || true
+          docker logs e2e-hbbr || true
+          docker logs e2e-peer || true
+          docker exec e2e-peer bash -c 'tail -n 100 /root/.local/share/logs/RustDesk/server/*.log' || true
 
   windows:
     name: Windows build

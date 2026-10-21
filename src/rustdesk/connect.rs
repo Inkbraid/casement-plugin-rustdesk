@@ -24,7 +24,16 @@ use hbb_common::tcp::{FramedStream, KxTranscript};
 use std::time::{Duration, Instant};
 
 const CONNECT_TIMEOUT: u64 = 18_000;
-const READ_TIMEOUT: u64 = 18_000;
+/// How long the peer gets to speak first once both sides are on the relay.
+const FIRST_MESSAGE_TIMEOUT: u64 = 8_000;
+const JOIN_DELAY_MS: u64 = 50;
+
+/// Why the peer handshake didn't complete.
+enum Handshake {
+    /// The peer never spoke: the relay may not have paired us.
+    Silent(Failure),
+    Failed(Failure),
+}
 
 /// A connection that failed, with a sentence for the user.
 pub type Failure = String;
@@ -115,26 +124,41 @@ pub async fn connect(peer: &PeerAddress) -> Result<Stream, Failure> {
         )
     })?;
 
-    // Verify what the ID server says about the peer before going on.
-    let (signed_pk, mut conn) = match answer {
+    let (signed_pk, relay_named, mut conn) = match answer {
         Answer::Relay {
             uuid,
             relay,
             signed_pk,
         } => {
-            let relay = relay_address(peer, &relay)?;
-            (signed_pk, join_relay(peer, &relay, uuid).await?)
+            let ours = relay_address(peer, &relay)?;
+            let conn = join_relay(peer, &ours, uuid).await?;
+            (signed_pk, relay, conn)
         }
         Answer::Punch { relay, signed_pk } => {
             drop(rv);
-            let relay = relay_for_request(peer, &relay)?;
-            let uuid = request_relay(peer, &relay, !signed_pk.is_empty()).await?;
-            let ours = relay_address(peer, &relay)?;
-            (signed_pk, join_relay(peer, &ours, uuid).await?)
+            let theirs = relay_for_request(peer, &relay)?;
+            let uuid = request_relay(peer, &theirs, !signed_pk.is_empty()).await?;
+            let conn = join_relay(peer, &relay_address(peer, &relay)?, uuid).await?;
+            (signed_pk, relay, conn)
         }
     };
-    secure(&mut conn, &peer.id, &signed_pk, &rs_pk).await?;
-    Ok(conn)
+    let mut retried = false;
+    loop {
+        match secure(&mut conn, &peer.id, &signed_pk, &rs_pk).await {
+            Ok(()) => return Ok(conn),
+            // hbbr pairs the two sides with a check-then-insert that two
+            // exactly simultaneous arrivals can slip past, leaving both
+            // unpaired. One fresh pairing gets around that.
+            Err(Handshake::Silent(text)) if !retried => {
+                log::warn!("{text} Asking for another relay pairing.");
+                retried = true;
+                let theirs = relay_for_request(peer, &relay_named)?;
+                let uuid = request_relay(peer, &theirs, true).await?;
+                conn = join_relay(peer, &relay_address(peer, &relay_named)?, uuid).await?;
+            }
+            Err(Handshake::Silent(text) | Handshake::Failed(text)) => return Err(text),
+        }
+    }
 }
 
 fn punch_failure(
@@ -223,6 +247,8 @@ async fn request_relay(peer: &PeerAddress, relay: &str, secure: bool) -> Result<
 
 /// Connects to hbbr and asks to be paired by `uuid`.
 async fn join_relay(peer: &PeerAddress, relay: &str, uuid: String) -> Result<Stream, Failure> {
+    // Let the peer's own request reach hbbr first; see `connect`.
+    hbb_common::tokio::time::sleep(Duration::from_millis(JOIN_DELAY_MS)).await;
     log::info!("joining relay {relay}");
     let mut conn = tcp(relay)
         .await
@@ -249,12 +275,12 @@ async fn secure(
     peer_id: &str,
     signed_pk: &[u8],
     rs_pk: &sign::PublicKey,
-) -> Result<(), Failure> {
+) -> Result<(), Handshake> {
     let refused = |why: &str| {
         log::error!("handshake refused: {why}");
-        format!(
+        Handshake::Failed(format!(
             "{peer_id}'s identity couldn't be verified against the server key ({why}), so the connection was refused."
-        )
+        ))
     };
     if signed_pk.is_empty() {
         return Err(refused("the ID server sent no key for it"));
@@ -266,18 +292,17 @@ async fn secure(
     }
     let peer_sign_pk = sign::PublicKey(vouched.pk);
 
-    let bytes = match hbb_common::timeout(READ_TIMEOUT, conn.next()).await {
+    let bytes = match hbb_common::timeout(FIRST_MESSAGE_TIMEOUT, conn.next()).await {
         Err(_) => {
-            return Err(format!(
+            return Err(Handshake::Silent(format!(
                 "{peer_id} didn't answer through the relay in time."
-            ))
+            )))
         }
-        Ok(None) => {
-            return Err(format!(
+        Ok(None) | Ok(Some(Err(_))) => {
+            return Err(Handshake::Silent(format!(
                 "{peer_id} closed the connection before it was set up."
-            ))
+            )))
         }
-        Ok(Some(Err(e))) => return Err(format!("The connection to {peer_id} broke: {e}")),
         Ok(Some(Ok(b))) => b,
     };
     let msg = Message::parse_from_bytes(&bytes)
@@ -302,7 +327,7 @@ async fn secure(
     });
     send(conn, &out)
         .await
-        .map_err(|e| format!("The connection to {peer_id} broke: {e}"))?;
+        .map_err(|e| Handshake::Failed(format!("The connection to {peer_id} broke: {e}")))?;
     conn.set_negotiated_key(
         key,
         true,
@@ -313,7 +338,7 @@ async fn secure(
             picked,
         },
     )
-    .map_err(|e| format!("Couldn't set up encryption with {peer_id}: {e}"))?;
+    .map_err(|e| Handshake::Failed(format!("Couldn't set up encryption with {peer_id}: {e}")))?;
     log::info!("secured with {peer_id} (key exchange version {picked})");
     Ok(())
 }
