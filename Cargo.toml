@@ -1,0 +1,56 @@
+[package]
+name = "casement-rustdesk"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+description = "RustDesk support for Casement: a Casement protocol plugin for self-hosted RustDesk servers"
+repository = "https://github.com/Inkbraid/casement-plugin-rustdesk"
+publish = false
+
+[lib]
+name = "casement_rustdesk"
+path = "src/lib.rs"
+
+[[bin]]
+name = "casement-rustdesk"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+log = "0.4"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+percent-encoding = "2"
+zstd = "0.13"
+
+# RustDesk's own crates, from https://github.com/rustdesk/rustdesk at the
+# commit recorded in RUSTDESK_COMMIT (src/rustdesk/mod.rs). Keep all three on
+# the same rev.
+hbb_common = { git = "https://github.com/rustdesk/rustdesk", rev = "c7f212df2c960fa74bd83d3849a5a7ce7809a047" }
+base = { git = "https://github.com/rustdesk/rustdesk", rev = "c7f212df2c960fa74bd83d3849a5a7ce7809a047" }
+scrap = { git = "https://github.com/rustdesk/rustdesk", rev = "c7f212df2c960fa74bd83d3849a5a7ce7809a047" }
+# Key code tables, the revision RustDesk's Cargo.lock uses at that commit.
+rdev = { git = "https://github.com/rustdesk-org/rdev", rev = "0904f23ce496e255461a98848b85c11fa5a62eab" }
+
+# On Linux (tests) the codec libraries come from the system via pkg-config;
+# on Windows from vcpkg (VCPKG_ROOT), as in RustDesk's own builds.
+[target.'cfg(target_os = "linux")'.dependencies]
+scrap = { git = "https://github.com/rustdesk/rustdesk", rev = "c7f212df2c960fa74bd83d3849a5a7ce7809a047", features = ["linux-pkg-config"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+memmap2 = "0.9"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_Console",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4

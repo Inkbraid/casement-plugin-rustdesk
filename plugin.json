@@ -1,0 +1,24 @@
+{
+  "format": "casement-plugin",
+  "version": 1,
+  "id": "rustdesk",
+  "name": "RustDesk",
+  "description": "RustDesk through a self-hosted ID and relay server",
+  "icon": "icon.png",
+  "program": "casement-rustdesk.exe",
+  "args": [],
+  "homepage": "https://github.com/Inkbraid/casement-plugin-rustdesk",
+  "capabilities": ["password", "clipboard", "cursor"],
+  "connections": [
+    {
+      "scheme": "rustdesk",
+      "name": "RustDesk (self-hosted)",
+      "fields": [
+        { "name": "peer", "label": "Peer ID", "part": "host", "type": "text", "required": true, "placeholder": "123456789" },
+        { "name": "server", "label": "ID server", "part": "query", "type": "text", "required": true, "placeholder": "hbbs.example.com:21116" },
+        { "name": "key", "label": "Server key", "part": "query", "type": "text", "required": true },
+        { "name": "relay", "label": "Relay server", "part": "query", "type": "text", "placeholder": "hbbr.example.com:21117" }
+      ]
+    }
+  ]
+}

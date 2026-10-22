@@ -1,0 +1,103 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch or pull request replaces a running check.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The vcpkg commit RustDesk's own build uses at the pinned RustDesk commit;
+  # keep in step with the baseline in vcpkg.json.
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+  # vcpkg removed its GitHub Actions cache backend; built packages are kept
+  # in a folder that actions/cache saves instead.
+  VCPKG_BINARY_SOURCES: "clear;files,C:\\vcpkg-binary-cache,readwrite"
+
+jobs:
+  linux:
+    name: Linux tests
+    runs-on: ubuntu-latest
+    env:
+      PKG_CONFIG_PATH: ${{ github.workspace }}/ci/pkgconfig
+    steps:
+      - uses: actions/checkout@v4
+      - name: Codec and X11 libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvpx-dev libaom-dev libyuv-dev libjpeg-dev \
+            libx11-dev libxi-dev libxtst-dev libxext-dev libxfixes-dev \
+            libxcb1-dev libxcb-shm0-dev libxcb-randr0-dev libclang-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - name: Start hbbs, hbbr and a RustDesk peer
+        run: tools/e2e/up.sh
+      - name: End-to-end test against the peer
+        run: |
+          . tools/e2e/env
+          cargo test --test e2e -- --nocapture
+      - name: Peer and server logs
+        if: failure()
+        run: |
+          docker logs e2e-hbbs || true
+          docker logs e2e-hbbr || true
+          docker logs e2e-peer || true
+          docker exec e2e-peer bash -c 'tail -n 100 /root/.local/share/logs/RustDesk/server/*.log' || true
+
+  windows:
+    name: Windows build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install LLVM (for bindgen)
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "15.0.6"
+      - name: Cache the built codec libraries
+        uses: actions/cache@v4
+        with:
+          path: C:\vcpkg-binary-cache
+          key: vcpkg-x64-windows-static-${{ env.VCPKG_COMMIT_ID }}-${{ hashFiles('vcpkg.json', 'vcpkg-ports/**') }}
+          restore-keys: vcpkg-x64-windows-static-${{ env.VCPKG_COMMIT_ID }}-
+      - name: Set up vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+      - name: Build the codec libraries
+        shell: bash
+        run: |
+          mkdir -p /c/vcpkg-binary-cache
+          if ! "$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"; then
+            find "$VCPKG_ROOT/buildtrees" -name "*.log" -exec sh -c 'echo "== $1"; tail -n 50 "$1"' _ {} \;
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo build --release
+      - run: cargo test --release
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist/rustdesk | Out-Null
+          Copy-Item target/release/casement-rustdesk.exe, plugin.json, icon.png, LICENSE, README.md dist/rustdesk/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: casement-rustdesk-windows-x64
+          path: dist/
