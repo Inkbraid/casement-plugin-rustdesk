@@ -14,8 +14,10 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Largest message either side may send.
 pub const MAX_MESSAGE: usize = 16 << 20;
 
-/// Capabilities declared in our `hello`.
-pub const CAPABILITIES: &[&str] = &["clipboard", "cursor"];
+/// Capabilities declared in our `hello` (and in `plugin.json`): peers can
+/// ask for a password, and clipboard text and the cursor come separately
+/// from the picture.
+pub const CAPABILITIES: &[&str] = &["password", "clipboard", "cursor"];
 
 /// Reads one message body. `Ok(None)` means the stream ended cleanly between
 /// messages.
@@ -270,7 +272,7 @@ mod tests {
         assert_eq!(
             v,
             json!({"type": "hello", "protocol": 1, "name": "RustDesk",
-                   "version": env!("CARGO_PKG_VERSION"), "capabilities": ["clipboard", "cursor"]})
+                   "version": env!("CARGO_PKG_VERSION"), "capabilities": ["password", "clipboard", "cursor"]})
         );
     }
 

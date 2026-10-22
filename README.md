@@ -37,6 +37,7 @@ unpack it so that you get
 %LOCALAPPDATA%\Casement\plugins\
     rustdesk\
         plugin.json
+        icon.png
         casement-rustdesk.exe
 ```
 
@@ -236,7 +237,10 @@ workspace and is used under that licence.
 
 Casement itself is a separate program that talks to this plugin only through
 the documented protocol in [docs/plugin-protocol.md](docs/plugin-protocol.md);
-the plugin's licence does not extend to it.
+the plugin's licence does not extend to it. That document is a copy from
+[Inkbraid/casement-plugin-protocol](https://github.com/Inkbraid/casement-plugin-protocol),
+licensed CC BY 4.0. The icon is the project's own artwork
+(`tools/make-icon.py`).
 
 If you run a modified version for others over a network, the AGPL requires
 you to offer them its source. Every release of this plugin is published
