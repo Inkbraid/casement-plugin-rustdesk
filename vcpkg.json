@@ -1,5 +1,5 @@
 {
-  "dependencies": ["aom", "libvpx", "libyuv"],
+  "dependencies": ["aom", "libvpx", "libyuv", "opus"],
   "vcpkg-configuration": {
     "default-registry": {
       "kind": "builtin",

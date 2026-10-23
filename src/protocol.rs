@@ -15,9 +15,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const MAX_MESSAGE: usize = 16 << 20;
 
 /// Capabilities declared in our `hello` (and in `plugin.json`): peers can
-/// ask for a password, and clipboard text and the cursor come separately
-/// from the picture.
-pub const CAPABILITIES: &[&str] = &["password", "clipboard", "cursor"];
+/// ask for a password, clipboard text and the cursor come separately from
+/// the picture, and the plugin plays the peer's sound itself.
+pub const CAPABILITIES: &[&str] = &["password", "clipboard", "cursor", "audio"];
 
 /// Reads one message body. `Ok(None)` means the stream ended cleanly between
 /// messages.
@@ -272,7 +272,7 @@ mod tests {
         assert_eq!(
             v,
             json!({"type": "hello", "protocol": 1, "name": "RustDesk",
-                   "version": env!("CARGO_PKG_VERSION"), "capabilities": ["password", "clipboard", "cursor"]})
+                   "version": env!("CARGO_PKG_VERSION"), "capabilities": ["password", "clipboard", "cursor", "audio"]})
         );
     }
 

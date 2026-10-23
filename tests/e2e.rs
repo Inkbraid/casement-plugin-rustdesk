@@ -1,7 +1,8 @@
 //! End to end against a real RustDesk peer behind a real hbbs/hbbr, as
 //! started by `tools/e2e/up.sh`. Skipped unless `CASEMENT_E2E_ADDRESS` is
 //! set. Checks on the peer's side go through `docker exec` into
-//! `CASEMENT_E2E_PEER_CONTAINER`.
+//! `CASEMENT_E2E_PEER_CONTAINER`; the sound checks read the plugin's log
+//! (the peer plays a 440 Hz tone, at 0.5).
 
 use casement_rustdesk::protocol::{FromCasement, State, ToCasement};
 use casement_rustdesk::sim::Casement;
@@ -85,6 +86,53 @@ fn key(c: &mut Casement, scancode: u32) {
     }
 }
 
+/// How many lines of the plugin's log contain `text`.
+fn logged(c: &Casement, text: &str) -> usize {
+    c.stderr().iter().filter(|l| l.contains(text)).count()
+}
+
+fn wait_logged(c: &Casement, text: &str, times: usize) {
+    let end = Instant::now() + T;
+    while logged(c, text) < times {
+        assert!(Instant::now() < end, "{text:?} wasn't logged {times} times");
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
+/// The numbers in the first log line containing `text`, in order, from the
+/// plugin's message on (`sound: …`).
+fn numbers(c: &Casement, text: &str) -> Vec<f64> {
+    let line = c
+        .stderr()
+        .into_iter()
+        .find(|l| l.contains(text))
+        .unwrap_or_else(|| panic!("no {text:?} in the log"));
+    let message = &line[line.find("sound: ").unwrap_or(0)..];
+    message
+        .split(|ch: char| !(ch.is_ascii_digit() || ch == '.'))
+        .filter_map(|w| w.trim_matches('.').parse().ok())
+        .collect()
+}
+
+/// What the peer's sound came to, from the line the plugin logs at the end.
+struct SoundTotals {
+    decoded: f64,
+    frames: f64,
+    peak: f64,
+}
+
+fn sound_totals(c: &Casement) -> SoundTotals {
+    let n = numbers(c, "packets decoded");
+    SoundTotals {
+        decoded: n[0],
+        frames: n[1],
+        peak: n[2],
+    }
+}
+
+/// The 440 Hz tone at 48 kHz in stereo, as RustDesk's Linux peers send it.
+const PEER_FORMAT: &str = "sound: Opus, 48000 Hz, 2 channels";
+
 /// One test, run in order: the steps share one peer.
 #[test]
 fn rustdesk_peer() {
@@ -93,6 +141,7 @@ fn rustdesk_peer() {
         return;
     };
     session(&e);
+    muted_from_the_start(&e);
     wrong_and_missing_password(&e);
     bad_server_key(e);
 }
@@ -203,13 +252,54 @@ fn session(e: &Env) {
     // Frames keep coming as the picture changes (the typed command did).
     c.send(&FromCasement::FrameAck { surface: 1 }).unwrap();
 
+    // Sound: the peer's tone arrives and plays. The peer sends about two
+    // seconds at a time (PulseAudio's default buffering), so this waits for
+    // sound rather than for a time.
+    wait_logged(&c, PEER_FORMAT, 1);
+    wait_logged(&c, "sound: playing", 1);
+    // Long enough for a whole two seconds to arrive, however the first
+    // came.
+    std::thread::sleep(Duration::from_secs(5));
+    // Muting stops it at the peer: at most what was already on its way
+    // arrives, not the 600 packets of six seconds.
+    c.send(&FromCasement::Mute { muted: true }).unwrap();
+    wait_logged(&c, "sound: muted", 1);
+    std::thread::sleep(Duration::from_secs(6));
+    c.send(&FromCasement::Mute { muted: false }).unwrap();
+    wait_logged(&c, "sound: unmuted", 1);
+    let left_out = numbers(&c, "sound: unmuted")[0];
+    assert!(left_out < 300.0, "{left_out} packets arrived while muted");
+    // Unmuting starts it anew.
+    wait_logged(&c, PEER_FORMAT, 2);
+    wait_logged(&c, "sound: playing", 2);
+    std::thread::sleep(Duration::from_secs(1));
+
     c.send(&FromCasement::Disconnect).unwrap();
     c.close_stdin();
     assert_eq!(
         c.wait(Duration::from_secs(2)).and_then(|s| s.code()),
         Some(0)
     );
+    // At least one of the peer's two-second parcels of the tone, decoded and
+    // played.
+    let s = sound_totals(&c);
+    assert!(s.decoded > 150.0, "{} packets decoded", s.decoded);
+    assert!(s.frames > 48_000.0, "{} frames played", s.frames);
+    assert!(s.peak > 0.3, "peak level {}", s.peak);
     on_peer(e, "rm -f /tmp/typedok");
+}
+
+/// Muted before the login: the peer is asked for no sound at all.
+fn muted_from_the_start(e: &Env) {
+    let mut c = start(e, &e.password);
+    c.send(&FromCasement::Mute { muted: true }).unwrap();
+    assert_eq!(state(&c).0, State::Connected);
+    std::thread::sleep(Duration::from_secs(3));
+    c.send(&FromCasement::Disconnect).unwrap();
+    c.close_stdin();
+    assert_eq!(c.wait(T).and_then(|s| s.code()), Some(0));
+    assert_eq!(logged(&c, PEER_FORMAT), 0);
+    assert_eq!(sound_totals(&c).decoded, 0.0);
 }
 
 fn wrong_and_missing_password(e: &Env) {

@@ -8,7 +8,7 @@
   "program": "casement-rustdesk.exe",
   "args": [],
   "homepage": "https://github.com/Inkbraid/casement-plugin-rustdesk",
-  "capabilities": ["password", "clipboard", "cursor"],
+  "capabilities": ["password", "clipboard", "cursor", "audio"],
   "connections": [
     {
       "scheme": "rustdesk",

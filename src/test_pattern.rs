@@ -126,6 +126,7 @@ impl Session for TestSession {
                 });
             }
             FromCasement::Wheel { delta } => log::info!("wheel delta={delta}"),
+            FromCasement::Mute { muted } => log::info!("mute muted={muted}"),
             FromCasement::Clipboard { text } => {
                 log::info!(
                     "clipboard {} chars: {:?}",

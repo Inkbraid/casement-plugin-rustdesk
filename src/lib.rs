@@ -8,6 +8,7 @@ pub mod protocol;
 pub mod rustdesk;
 pub mod session;
 pub mod sim;
+pub mod sound;
 pub mod stdio;
 pub mod surface;
 pub mod test_pattern;

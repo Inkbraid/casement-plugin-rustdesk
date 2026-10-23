@@ -1,0 +1,14 @@
+#!/bin/sh
+# Stands in for systemd-logind's loginctl in the container: root is logged
+# in on seat0 with X on :0, as on a desktop. RustDesk then starts its
+# connection manager for a session (with sudo, as the logged-in user), and
+# with it the sound capture; without a session it waits for a login.
+case "$*" in
+  "") printf 'SESSION  UID USER SEAT  TTY\n      1    0 root seat0 tty7\n\n1 sessions listed.\n' ;;
+  "show-session -p State 1") echo State=active ;;
+  "show-session -p Type 1") echo Type=x11 ;;
+  "show-session -p Display 1") echo Display=:0 ;;
+  "show-session 1") printf 'Id=1\nName=root\nUser=0\nSeat=seat0\nDisplay=:0\nType=x11\nState=active\nActive=yes\nRemote=no\n' ;;
+  "show-session 1 --property=LockedHint") echo LockedHint=no ;;
+  *) exit 1 ;;
+esac

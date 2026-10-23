@@ -1,6 +1,6 @@
 [package]
 name = "casement-rustdesk"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "AGPL-3.0-only"
 description = "RustDesk support for Casement: a Casement protocol plugin for self-hosted RustDesk servers"
@@ -32,17 +32,34 @@ base = { git = "https://github.com/rustdesk/rustdesk", rev = "c7f212df2c960fa74b
 scrap = { git = "https://github.com/rustdesk/rustdesk", rev = "c7f212df2c960fa74bd83d3849a5a7ce7809a047" }
 # Key code tables, the revision RustDesk's Cargo.lock uses at that commit.
 rdev = { git = "https://github.com/rustdesk-org/rdev", rev = "0904f23ce496e255461a98848b85c11fa5a62eab" }
+# libopus bindings for the peer's sound, likewise at the revision RustDesk's
+# Cargo.lock uses. libopus itself (BSD-3-Clause) comes from vcpkg or the
+# system, like the codec libraries.
+magnum-opus = { git = "https://github.com/rustdesk-org/magnum-opus", rev = "588c6e1f9ed50c3a01fa64f3bd3e7cdb0378a114" }
 
 # On Linux (tests) the codec libraries come from the system via pkg-config;
 # on Windows from vcpkg (VCPKG_ROOT), as in RustDesk's own builds.
 [target.'cfg(target_os = "linux")'.dependencies]
 scrap = { git = "https://github.com/rustdesk/rustdesk", rev = "c7f212df2c960fa74bd83d3849a5a7ce7809a047", features = ["linux-pkg-config"] }
+magnum-opus = { git = "https://github.com/rustdesk-org/magnum-opus", rev = "588c6e1f9ed50c3a01fa64f3bd3e7cdb0378a114", features = ["linux-pkg-config"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 memmap2 = "0.9"
 
 [target.'cfg(windows)'.dependencies]
+# WASAPI, for playing the sound.
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_KernelStreaming",
+    "Win32_Media_Multimedia",
+    "Win32_Security",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+] }
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_Security",

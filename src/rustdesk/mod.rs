@@ -2,11 +2,12 @@
 //!
 //! The protocol work reuses RustDesk's own crates (`hbb_common` for the
 //! rendezvous protocol, framing and encryption, `base` for the message
-//! protocol, `scrap` for the video decoders) and code adapted from RustDesk's
-//! client, all from <https://github.com/rustdesk/rustdesk> at
-//! [`RUSTDESK_COMMIT`]. RustDesk is © Purslane Ltd. and contributors and
+//! protocol, `scrap` for the video decoders, `magnum-opus` for the sound)
+//! and code adapted from RustDesk's client, all from
+//! <https://github.com/rustdesk/rustdesk> at [`RUSTDESK_COMMIT`]. RustDesk is © Purslane Ltd. and contributors and
 //! licensed under the AGPL-3.0, as is this program.
 
+mod audio;
 mod client;
 mod connect;
 mod crypto;

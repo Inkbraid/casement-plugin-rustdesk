@@ -1,3 +1,4 @@
 /target
 tools/e2e/env
 tools/e2e/peer/*.deb
+tools/sound-check/target
