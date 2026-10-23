@@ -960,10 +960,9 @@ mod tests {
     }
 
     fn floats(bytes: &[u8]) -> Vec<f32> {
-        bytes
-            .chunks_exact(4)
-            .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
-            .collect()
+        let (whole, rest) = bytes.as_chunks::<4>();
+        assert!(rest.is_empty());
+        whole.iter().map(|b| f32::from_le_bytes(*b)).collect()
     }
 
     #[test]
@@ -1029,7 +1028,9 @@ mod tests {
         assert!((44099..=44100).contains(&n), "{n} frames");
         // Still a 441 Hz wave at 0.8: compare with the ideal one.
         let worst = got
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .enumerate()
             .map(|(i, f)| {
                 let t = i as f32 / 44100.0;
