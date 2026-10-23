@@ -32,7 +32,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libvpx-dev libaom-dev libyuv-dev libjpeg-dev \
+            libvpx-dev libaom-dev libyuv-dev libjpeg-dev libopus-dev \
             libx11-dev libxi-dev libxtst-dev libxext-dev libxfixes-dev \
             libxcb1-dev libxcb-shm0-dev libxcb-randr0-dev libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
@@ -55,6 +55,27 @@ jobs:
           docker logs e2e-hbbr || true
           docker logs e2e-peer || true
           docker exec e2e-peer bash -c 'tail -n 100 /root/.local/share/logs/RustDesk/server/*.log' || true
+
+  # The WASAPI side of the sound, which the Windows machines (with no sound
+  # device) can't play: under Wine, into PulseAudio.
+  sound:
+    name: Sound output under Wine
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tools
+        run: |
+          sudo apt-get update
+          # wine64 alone has no wine command: that comes from the wine package.
+          sudo apt-get install -y --no-install-recommends \
+            gcc-mingw-w64-x86-64 wine64 wine pulseaudio pulseaudio-utils
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools/sound-check
+      - run: tools/sound-check/check.sh
 
   windows:
     name: Windows build
@@ -95,8 +116,12 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist/rustdesk | Out-Null
-          Copy-Item target/release/casement-rustdesk.exe, plugin.json, icon.png, LICENSE, README.md dist/rustdesk/
+          New-Item -ItemType Directory -Force dist/rustdesk/licenses | Out-Null
+          Copy-Item target/release/casement-rustdesk.exe, plugin.json, icon.png, LICENSE, README.md, CHANGELOG.md dist/rustdesk/
+          # The licences of the libraries vcpkg built into the exe.
+          foreach ($port in 'aom', 'libvpx', 'libyuv', 'opus') {
+            Copy-Item "$env:VCPKG_ROOT/installed/x64-windows-static/share/$port/copyright" "dist/rustdesk/licenses/$port.txt"
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: casement-rustdesk-windows-x64

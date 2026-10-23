@@ -1,13 +1,15 @@
-//! One session with a peer: login, then pictures, cursor and clipboard from
-//! the peer and input and clipboard from Casement.
+//! One session with a peer: login, then pictures, sound, cursor and
+//! clipboard from the peer and input, mute and clipboard from Casement.
 //!
 //! The message handling follows `Remote::io_loop` and `handle_msg_from_peer`
-//! in RustDesk's `src/client/io_loop.rs`, and the login `handle_hash` and
-//! `LoginConfigHandler::create_login_msg` in `src/client.rs` (at the commit
-//! in [`super::RUSTDESK_COMMIT`]), reduced to a remote-desktop view without
-//! file transfer, audio, chat, privacy mode or multiple displays. RustDesk is
-//! © Purslane Ltd. and contributors, AGPL-3.0.
+//! in RustDesk's `src/client/io_loop.rs`, the login `handle_hash` and
+//! `LoginConfigHandler::create_login_msg` and muting
+//! (`LoginConfigHandler::toggle_option("disable-audio")`) in `src/client.rs`
+//! (at the commit in [`super::RUSTDESK_COMMIT`]), reduced to a remote-desktop
+//! view without file transfer, chat, voice calls, privacy mode or multiple
+//! displays. RustDesk is © Purslane Ltd. and contributors, AGPL-3.0.
 
+use super::audio::Audio;
 use super::input::{Keyboard, Mouse, Platform};
 use super::media::{self, Cursors};
 use super::video::Video;
@@ -15,8 +17,8 @@ use crate::address::PeerAddress;
 use crate::host::Host;
 use crate::protocol::{FromCasement, State, ToCasement};
 use base::message_proto::{
-    login_response, message, misc, DisplayInfo, Hash, LoginRequest, Message, Misc, OptionMessage,
-    PeerInfo,
+    login_response, message, misc, option_message::BoolOption, DisplayInfo, Hash, LoginRequest,
+    Message, Misc, OptionMessage, PeerInfo,
 };
 use hbb_common::protobuf::{EnumOrUnknown, Message as _, MessageField};
 use hbb_common::sha2::{Digest, Sha256};
@@ -48,13 +50,13 @@ pub async fn run(
     password: String,
     mut events: UnboundedReceiver<Event>,
 ) {
-    let mut early_clipboard = None;
+    let mut early = Early::default();
     let mut conn = tokio::select! {
         res = super::connect::connect(&peer) => match res {
             Ok(c) => c,
             Err(text) => host.finish(State::Failed, &text),
         },
-        _ = wait_for_disconnect(&mut events, &mut early_clipboard) => return,
+        _ = wait_for_disconnect(&mut events, &mut early) => return,
     };
     let mut s = Remote {
         host,
@@ -67,8 +69,10 @@ pub async fn run(
         cursors: Cursors::default(),
         cursor_hidden: false,
         video: None,
+        audio: None,
+        muted: early.muted,
         last_clipboard: None,
-        pending_clipboard: early_clipboard,
+        pending_clipboard: early.clipboard,
         refresh: None,
     };
     let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::unbounded_channel::<()>();
@@ -102,16 +106,24 @@ pub async fn run(
     }
 }
 
+/// What Casement sent while the connection was being made.
+#[derive(Default)]
+struct Early {
+    /// The latest clipboard text, for after login.
+    clipboard: Option<String>,
+    /// Whether sound is muted: the login asks for sound only if not.
+    muted: bool,
+}
+
 /// Waits for `disconnect` while connecting, keeping the latest clipboard
-/// text for after login. Other input before the connection has nowhere to go.
-async fn wait_for_disconnect(
-    events: &mut UnboundedReceiver<Event>,
-    clipboard: &mut Option<String>,
-) {
+/// text and mute state for after login. Other input before the connection
+/// has nowhere to go.
+async fn wait_for_disconnect(events: &mut UnboundedReceiver<Event>, early: &mut Early) {
     loop {
         match events.recv().await {
             Some(Event::Disconnect) | None => return,
-            Some(Event::Casement(FromCasement::Clipboard { text })) => *clipboard = Some(text),
+            Some(Event::Casement(FromCasement::Clipboard { text })) => early.clipboard = Some(text),
+            Some(Event::Casement(FromCasement::Mute { muted })) => early.muted = muted,
             Some(Event::Casement(_)) => {}
         }
     }
@@ -129,6 +141,10 @@ struct Remote {
     cursors: Cursors,
     cursor_hidden: bool,
     video: Option<Video>,
+    /// Started at login.
+    audio: Option<Audio>,
+    /// Casement's mute state; the peer sends sound only while unmuted.
+    muted: bool,
     /// The last clipboard text exchanged, to avoid echoing it back.
     last_clipboard: Option<String>,
     /// Clipboard text from Casement before login.
@@ -138,13 +154,21 @@ struct Remote {
 
 impl Remote {
     /// The connection ended: `closed` once logged in, `failed` before.
-    fn end(&self, text: &str) -> ! {
+    fn end(&mut self, text: &str) -> ! {
         let state = if self.info.is_some() {
             State::Closed
         } else {
             State::Failed
         };
+        self.stop_audio();
         self.host.finish(state, text)
+    }
+
+    /// Stops the sound, which logs what was played.
+    fn stop_audio(&mut self) {
+        if let Some(a) = self.audio.take() {
+            a.stop();
+        }
     }
 
     fn platform(&self) -> Platform {
@@ -205,6 +229,11 @@ impl Remote {
                     self.clipboard_from_peer(text);
                 }
             }
+            Some(message::Union::AudioFrame(af)) => {
+                if let Some(a) = &self.audio {
+                    a.packet(af.data);
+                }
+            }
             Some(message::Union::TestDelay(t)) => {
                 if !t.from_client {
                     let mut out = Message::new();
@@ -245,7 +274,7 @@ impl Remote {
                 .finalize()
                 .to_vec()
         };
-        let msg = login_message(&self.peer.id, password);
+        let msg = login_message(&self.peer.id, password, self.muted);
         log::info!("logging in to {}", self.peer.id);
         send(conn, msg).await;
     }
@@ -284,6 +313,7 @@ impl Remote {
                 let _ = r.send(());
             }
         }));
+        self.audio = Some(Audio::start(self.muted));
         if let Some(text) = self.pending_clipboard.take() {
             self.clipboard_to_peer(text, conn).await;
         }
@@ -348,6 +378,11 @@ impl Remote {
                     ..Default::default()
                 });
             }
+            Some(misc::Union::AudioFormat(f)) => {
+                if let Some(a) = &self.audio {
+                    a.format(f.sample_rate, f.channels);
+                }
+            }
             Some(misc::Union::PermissionInfo(p)) => {
                 log::info!("permission {:?}: {}", p.permission.enum_value(), p.enabled)
             }
@@ -379,8 +414,10 @@ impl Remote {
     }
 
     async fn handle_casement(&mut self, msg: FromCasement, conn: &mut Stream) {
-        if let FromCasement::Clipboard { text } = msg {
-            return self.clipboard_to_peer(text, conn).await;
+        match msg {
+            FromCasement::Clipboard { text } => return self.clipboard_to_peer(text, conn).await,
+            FromCasement::Mute { muted } => return self.mute(muted, conn).await,
+            _ => {}
         }
         if self.info.is_none() {
             return;
@@ -411,6 +448,22 @@ impl Remote {
         }
     }
 
+    /// Muting stops the sound here at once and asks the peer to stop
+    /// sending it, as RustDesk's own client does; unmuting asks for it
+    /// again. Before login the login asks for sound or not.
+    async fn mute(&mut self, muted: bool, conn: &mut Stream) {
+        if muted == self.muted {
+            return;
+        }
+        self.muted = muted;
+        if let Some(a) = &self.audio {
+            a.set_muted(muted);
+        }
+        if self.info.is_some() {
+            send(conn, sound_option(muted)).await;
+        }
+    }
+
     /// Ends the session from our side: release buttons, tell the peer, stop.
     async fn close(&mut self, conn: &mut Stream) {
         for e in self.mouse.release_all() {
@@ -423,15 +476,37 @@ impl Remote {
         let mut out = Message::new();
         out.set_misc(misc);
         send(conn, out).await;
+        self.stop_audio();
         log::info!("disconnected from {}", self.peer.id);
     }
 }
 
-/// The login request: who we are and what we can decode.
-fn login_message(peer_id: &str, password: Vec<u8>) -> Message {
+/// `disable_audio` for an option message: sound unless muted.
+fn sound(muted: bool) -> EnumOrUnknown<BoolOption> {
+    EnumOrUnknown::new(if muted {
+        BoolOption::Yes
+    } else {
+        BoolOption::No
+    })
+}
+
+/// Asks the peer to stop or start sending sound.
+fn sound_option(muted: bool) -> Message {
+    let mut misc = Misc::new();
+    misc.set_option(OptionMessage {
+        disable_audio: sound(muted),
+        ..Default::default()
+    });
+    let mut msg = Message::new();
+    msg.set_misc(misc);
+    msg
+}
+
+/// The login request: who we are, what we can decode and whether we want
+/// sound.
+fn login_message(peer_id: &str, password: Vec<u8>, muted: bool) -> Message {
     let option = OptionMessage {
-        // No sound until the `audio` capability exists.
-        disable_audio: EnumOrUnknown::new(base::message_proto::option_message::BoolOption::Yes),
+        disable_audio: sound(muted),
         supported_decoding: MessageField::some(scrap::codec::Decoder::supported_decodings(
             None,
             false,
@@ -482,7 +557,7 @@ mod tests {
 
     #[test]
     fn login_message_shape() {
-        let msg = login_message("123", vec![1, 2, 3]);
+        let msg = login_message("123", vec![1, 2, 3], false);
         let Some(message::Union::LoginRequest(lr)) = msg.union else {
             panic!()
         };
@@ -491,5 +566,39 @@ mod tests {
         assert_eq!(lr.version, super::super::RUSTDESK_VERSION);
         let sd = &lr.option.supported_decoding;
         assert!(sd.ability_vp9 > 0 || sd.ability_vp8 > 0, "{sd:?}");
+        assert_eq!(lr.option.disable_audio.enum_value(), Ok(BoolOption::No));
+    }
+
+    #[test]
+    fn muted_login_asks_for_no_sound() {
+        let msg = login_message("123", vec![], true);
+        let Some(message::Union::LoginRequest(lr)) = msg.union else {
+            panic!()
+        };
+        assert_eq!(lr.option.disable_audio.enum_value(), Ok(BoolOption::Yes));
+    }
+
+    #[test]
+    fn mute_and_unmute_messages() {
+        for muted in [true, false] {
+            let Some(message::Union::Misc(m)) = sound_option(muted).union else {
+                panic!()
+            };
+            let Some(misc::Union::Option(o)) = m.union else {
+                panic!()
+            };
+            let want = if muted {
+                BoolOption::Yes
+            } else {
+                BoolOption::No
+            };
+            assert_eq!(o.disable_audio.enum_value(), Ok(want));
+            // Only sound: every other option stays as it is.
+            let rest = OptionMessage {
+                disable_audio: Default::default(),
+                ..o
+            };
+            assert_eq!(rest, OptionMessage::default());
+        }
     }
 }

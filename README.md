@@ -11,7 +11,8 @@ project; "RustDesk" names the protocol and software it works with.
 
 It never uses the public rustdesk.com servers, has no account login and no
 address book. Casement keeps the connection list and saved passwords; the
-plugin only connects, shows the picture and passes input and clipboard text.
+plugin only connects, shows the picture, plays the sound and passes input
+and clipboard text.
 
 ## Status
 
@@ -22,8 +23,9 @@ plugin only connects, shows the picture and passes input and clipboard text.
 | RustDesk peers via a self-hosted hbbs/hbbr: relayed connection, server-key verification, password login | done |
 | Video: VP9, VP8, AV1 | done |
 | Keyboard (Map mode), mouse buttons and wheel, cursor shape and position, text clipboard both ways | done |
+| Sound (Opus, played through WASAPI) and `mute` | done |
 | H.264/H.265 (needs RustDesk's hardware codec build) | not yet; peers fall back to VP9 |
-| Hole punching / direct LAN, audio, `resize`, multiple displays, two-factor login | later |
+| Hole punching / direct LAN, `resize`, multiple displays, two-factor login | later |
 
 See [CHANGELOG.md](CHANGELOG.md).
 
@@ -39,6 +41,7 @@ unpack it so that you get
         plugin.json
         icon.png
         casement-rustdesk.exe
+        licenses\
 ```
 
 then restart Casement. Each release also carries the matching source code
@@ -95,6 +98,26 @@ What Casement sees as `state`:
 | `failed` | the ID isn't known, the peer is offline, the key doesn't match, a server can't be reached, the peer can't be verified, a two-factor code is required, … with a sentence saying which |
 | `closed` | the peer ended a working session, or stopped answering for 30 seconds |
 
+### Sound
+
+The plugin asks the peer for its sound unless Casement has muted the tab
+(capability `audio`). The peer sends Opus packets, which the plugin decodes
+with libopus and plays on Windows' default output device through WASAPI in
+shared mode, following the default when you change it. Muting stops the
+sound at once and asks the peer to stop sending it, as RustDesk's own client
+does; unmuting asks for it again.
+
+Sound waits in a small jitter buffer before it plays, starting 60 ms behind.
+If it runs dry because sound came late, the delay grows (up to half a
+second) and shrinks back while it doesn't; what stays queued beyond the
+delay is skipped. RustDesk on Linux records with PulseAudio's default
+buffering and sends about two seconds at a time, so its sound plays about
+that far behind, as in RustDesk's own client.
+
+Nothing arrives if the peer's "Enable audio" permission is off, or if a Linux
+peer has no sound to record (RustDesk records there what its default output
+plays).
+
 ### Test pattern
 
 `rustdesk://test` connects to nothing: it draws a moving test pattern and logs
@@ -123,13 +146,15 @@ version 1.5.1 in development):
 
 - as git dependencies at that commit: `hbb_common` (rendezvous protocol,
   framing, encryption and key exchange), `base` (the message protocol) and
-  `scrap` (the VP8/VP9/AV1 decoders); `rdev` from rustdesk-org at the
-  revision RustDesk's lockfile uses, for its key code tables;
+  `scrap` (the VP8/VP9/AV1 decoders); from rustdesk-org at the revisions
+  RustDesk's lockfile uses, `rdev` for its key code tables and
+  `magnum-opus`, RustDesk's libopus binding, for the sound;
 - as code adapted into `src/rustdesk/`, each file naming what it was adapted
   from: the client's connection set-up (`src/client.rs`), handshake helpers
   (`src/common.rs`), message handling (`src/client/io_loop.rs`), Map-mode
-  keys (`src/keyboard.rs`), clipboard messages (`src/clipboard.rs`);
-- vcpkg overlay ports for the codec libraries (`vcpkg-ports/`).
+  keys (`src/keyboard.rs`), clipboard messages (`src/clipboard.rs`), sound
+  decoding and muting (`src/client.rs`);
+- vcpkg overlay ports for the codec libraries and libopus (`vcpkg-ports/`).
 
 RustDesk's client lives in private modules of its main crate (`librustdesk`)
 and is reachable from outside only through the Flutter FFI, so driving it
@@ -138,10 +163,11 @@ brings the whole RustDesk server, tray, updater, Sciter/Flutter glue and audio.
 Adapting the few client files that a remote view needs pulls in far less.
 
 To move to a newer RustDesk commit: update the `rev` of the three crates in
-`Cargo.toml` and `RUSTDESK_COMMIT`/`RUSTDESK_VERSION` in
-`src/rustdesk/mod.rs`, compare the adapted functions with their upstream
-versions, copy `res/vcpkg/{aom,libvpx,libyuv}` again and match the vcpkg
-baseline in `vcpkg.json` and the CI workflows.
+`Cargo.toml` (and of `rdev` and `magnum-opus` to what RustDesk's lockfile
+has) and `RUSTDESK_COMMIT`/`RUSTDESK_VERSION` in `src/rustdesk/mod.rs`,
+compare the adapted functions with their upstream versions, copy
+`res/vcpkg/{aom,libvpx,libyuv,opus}` again and match the vcpkg baseline in
+`vcpkg.json` and the CI workflows.
 
 ## Building
 
@@ -157,8 +183,8 @@ vcpkg install --triplet x64-windows-static --x-install-root=%VCPKG_ROOT%\install
 cargo build --release          # target\release\casement-rustdesk.exe
 ```
 
-`vcpkg.json` and `vcpkg-ports/` build libvpx, aom and libyuv the way
-RustDesk's `scrap` crate links them. The C runtime is linked statically
+`vcpkg.json` and `vcpkg-ports/` build libvpx, aom, libyuv and libopus the
+way RustDesk's `scrap` and `magnum-opus` crates link them. The C runtime is linked statically
 (`.cargo/config.toml`), so the program needs nothing else installed. It is
 built for the Windows GUI subsystem, so starting it never opens a console
 window; its redirected standard handles work as usual.
@@ -169,7 +195,7 @@ window; its redirected standard handles work as usual.
 The codec libraries come from the distribution. On Ubuntu:
 
 ```
-sudo apt-get install libvpx-dev libaom-dev libyuv-dev libjpeg-dev libx11-dev libxi-dev \
+sudo apt-get install libvpx-dev libaom-dev libyuv-dev libjpeg-dev libopus-dev libx11-dev libxi-dev \
     libxtst-dev libxext-dev libxfixes-dev libxcb1-dev libxcb-shm0-dev libxcb-randr0-dev \
     libclang-dev pkg-config
 PKG_CONFIG_PATH=$PWD/ci/pkgconfig cargo test
@@ -185,14 +211,24 @@ lacks.)
   on Windows).
 - `tests/e2e.rs` tests against a real RustDesk peer: `tools/e2e/up.sh` starts
   hbbs and hbbr (`rustdesk/rustdesk-server`) and the official RustDesk 1.5.0
-  Linux build under Xvfb in Docker, then
+  Linux build under Xvfb in Docker, with PulseAudio playing a 440 Hz tone,
+  then
 
   ```
   . tools/e2e/env && cargo test --test e2e -- --nocapture
   ```
 
-  checks the picture, pointer position, typing, clipboard both ways,
-  `auth_failed` and a wrong server key. CI runs it on every pull request.
+  checks the picture, pointer position, typing, clipboard both ways, that
+  the tone arrives and plays, stops when muted and comes back when unmuted
+  (and that a session muted from the start gets none), `auth_failed` and a
+  wrong server key. CI runs it on every pull request. Off Windows the plugin
+  plays sound into a stand-in that takes it at the real rate.
+- `tools/sound-check/check.sh` builds the sound output (`src/sound/`) on its
+  own for Windows, plays tones through it under Wine, whose WASAPI plays
+  into PulseAudio, and checks what a recording heard: the part CI's Windows
+  machines, which have no sound device, can't play. It needs the
+  `x86_64-pc-windows-gnu` Rust target, MinGW-w64, Wine and PulseAudio; CI
+  runs it too.
 
 ### Trying it without Casement
 
@@ -234,6 +270,10 @@ It reuses code from RustDesk, which is licensed under the AGPL-3.0
 (© Purslane Ltd. and contributors). RustDesk's `hbb_common` crate currently
 ships no licence file of its own; it is part of RustDesk's AGPL-3.0
 workspace and is used under that licence.
+
+The program contains libvpx, aom, libyuv and libopus (BSD licences); their
+licences are in `licenses/` in each release zip. `magnum-opus` is under the
+MIT or Apache-2.0 licence.
 
 Casement itself is a separate program that talks to this plugin only through
 the documented protocol in [docs/plugin-protocol.md](docs/plugin-protocol.md);

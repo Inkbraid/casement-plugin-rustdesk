@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.2.0 (2026-10-23)
+
+- Sound: the peer's sound plays on Windows' default output device. The
+  login asks for sound instead of turning it off; the Opus packets are
+  decoded with libopus (through RustDesk's `magnum-opus` binding, libopus
+  built by vcpkg with RustDesk's port) and played through WASAPI in shared
+  mode, following the default device when it changes. A jitter buffer
+  starts the sound 60 ms behind and grows the delay when sound comes late;
+  RustDesk on Linux sends about two seconds at a time, which plays without
+  gaps.
+- Capability `audio` in `plugin.json` and `hello`, and `mute`: muting stops
+  the sound at once and asks the peer to stop sending it, as RustDesk's own
+  client does; unmuting asks for it again. A tab muted before the
+  connection is made logs in without sound.
+- The release zip carries the licences of the libraries built into the
+  program (libvpx, aom, libyuv, libopus) in `licenses/`.
+- Tests: the end-to-end peer plays a tone through PulseAudio, which has to
+  arrive, play, stop when muted and come back when unmuted;
+  `tools/sound-check` plays tones through the WASAPI output under Wine and
+  checks the recording. Both run in CI.
+
 ## 0.1.0 (2026-10-23)
 
 - Casement plugin protocol v1: length-prefixed JSON framing, `hello`,
